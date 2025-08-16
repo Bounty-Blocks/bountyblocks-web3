@@ -3,191 +3,208 @@ import FlowToken from 0xFLOWTOKEN
 
 access(all) contract Bounty {
 
-    access(all) struct SponsorPosting {
-//sponsor posting information:
-        access(all) let summary: String
-        access(all) let sponsorAddress: Address
-        access(all) let company: String
-        access(all) let trackDescription: String
-        access(all) let totalBounty: UFix64
-        access(all) let perBugBounty: UFix64
+    // ---------- Events ----------
+    access(all) event CompanyCreated(company: Address, name: String, defaultPerPayout: UFix64)
+    access(all) event SponsorStaked(company: Address, sponsor: Address, amount: UFix64, newPool: UFix64)
+    access(all) event ForumPosted(company: Address, hacker: Address, sponsor: Address, summary: String)
+    access(all) event IssueSubmitted(company: Address, hacker: Address, summary: String)
+    access(all) event IssueAccepted(company: Address, hacker: Address, by: Address)
+    access(all) event BountyPaid(company: Address, hacker: Address, amount: UFix64)
+    access(all) event CompletionStatusSet(company: Address, hacker: Address, completed: Bool)
+    access(all) event CompletionMessage(company: Address, message: String)
 
-        init(
-            summary: String,
-            sponsorAddress: Address,
-            company: String,
-            trackDescription: String,
-            totalBounty: UFix64,
-            perBugBounty: UFix64
-        ) {
-            self.summary = summary
-            self.sponsorAddress = sponsorAddress
+    // ---------- Data ----------
+    access(all) struct CompanyMeta {
+        access(all) let company: Address          // owner/controller of this pool
+        access(all) let name: String              // display label
+        access(all) let defaultPerPayout: UFix64  // advisory default amount
+        init(company: Address, name: String, defaultPerPayout: UFix64) {
             self.company = company
-            self.trackDescription = trackDescription
-            self.totalBounty = totalBounty
-            self.perBugBounty = perBugBounty
+            self.name = name
+            self.defaultPerPayout = defaultPerPayout
         }
     }
-//tracker for the issues with the status (can be updated) and the sponsor's decision)
-    access(all) struct IssueTrack {
-        // "open" = submissions & accepts allowed; "closed" = no more accepts/cancel
-        access(all) var status: String
-        access(all) var sponsorDecision: Bool
-//starts with an open status and the decision as a "no" before the sponsor makes their final decision
-        init() {
-            self.status = "open"
-            self.sponsorDecision = false
+
+    access(all) struct ForumPost {
+        access(all) let summary: String
+        access(all) let sponsor: Address
+        access(all) let hacker: Address
+        init(summary: String, sponsor: Address, hacker: Address) {
+            self.summary = summary
+            self.sponsor = sponsor
+            self.hacker = hacker
         }
     }
-//different self-explanitory events
-    access(all) event TrackCreated(sponsor: Address, track: String, totalBounty: UFix64, perBugBounty: UFix64)
-    access(all) event HackerSubmitted(hacker: Address, track: String, issue: String)
-    access(all) event IssueAccepted(sponsor: Address, track: String, issue: String)
-    access(all) event BountyPaid(hacker: Address, track: String, amount: UFix64)
-    access(all) event TrackCanceled(track: String, sponsor: Address, amount: UFix64)
 
-    // Per-sponsor -> per-track stake (kept from your version)
-    access(all) var stakes: {Address: {String: UFix64}}
-    access(all) var sponsorPostings: {String: SponsorPosting}
-    access(all) var issueTracks: {String: IssueTrack}
+    access(all) struct Issue {
+        access(all) let hacker: Address
+        access(all) let summary: String
+        access(all) var accepted: Bool
+        access(all) var completed: Bool
+        access(all) var paid: UFix64
+        init(hacker: Address, summary: String) {
+            self.hacker = hacker
+            self.summary = summary
+            self.accepted = false
+            self.completed = false
+            self.paid = 0.0
+        }
+    }
 
-    // Multiple submissions per track
-    access(all) var hackerSubmissions: {String: [Address]}
-    access(all) var submissionDetails: {String: {Address: String}}
-
-    // 🔐 one vault per track (fixes global-mixing bug)
-    access(self) var vaultByTrack: @{String: FlowToken.Vault}
+    // ---------- Storage (keyed by company address) ----------
+    access(all) var metaByCompany: {Address: CompanyMeta}
+    access(self) var vaultByCompany: @{Address: FlowToken.Vault}        // pooled funds per company
+    access(all) var stakesByCompany: {Address: {Address: UFix64}}       // company -> sponsor -> amount
+    access(all) var forumByCompany: {Address: [ForumPost]}
+    access(all) var issuesByCompany: {Address: {Address: Issue}}        // company -> hacker -> issue
 
     init() {
-        self.stakes = {}
-        self.sponsorPostings = {}
-        self.issueTracks = {}
-        self.hackerSubmissions = {}
-        self.submissionDetails = {}
-        self.vaultByTrack <- {}
+        self.metaByCompany = {}
+        self.vaultByCompany <- {}
+        self.stakesByCompany = {}
+        self.forumByCompany = {}
+        self.issuesByCompany = {}
     }
 
     destroy() {
-        destroy self.vaultByTrack
+        destroy self.vaultByCompany
     }
 
-    // Sponsor creates and funds the track (TX must withdraw the FLOW and pass sponsor addr)
-    access(all) fun createTrack(
-        sponsor: Address,
-        payment: @FlowToken.Vault,
-        summary: String,
-        company: String,
-        trackDescription: String,
-        perBugBounty: UFix64
-    ) {
+    // ---------- Company setup ----------
+    // Register a company bounty pool (no funds required here)
+    access(all) fun registerCompany(company: Address, name: String, defaultPerPayout: UFix64) {
         pre {
-            self.sponsorPostings[trackDescription] == nil: "Track already exists"
-            perBugBounty > 0.0: "Per-bug bounty must be positive"
-            payment.balance >= perBugBounty: "Prize pool must be at least one per-bug bounty"
+            self.metaByCompany[company] == nil: "company already registered"
+            defaultPerPayout >= 0.0: "defaultPerPayout must be non-negative"
         }
-
-        let totalBounty = payment.balance
-
-        // init per-track vault & deposit funds
-        self.vaultByTrack[trackDescription] <-! FlowToken.createEmptyVault()
-        self.vaultByTrack[trackDescription]!.deposit(from: <-payment)
-
-        self.sponsorPostings[trackDescription] = SponsorPosting(
-            summary: summary,
-            sponsorAddress: sponsor,
-            company: company,
-            trackDescription: trackDescription,
-            totalBounty: totalBounty,
-            perBugBounty: perBugBounty
-        )
-
-        if self.stakes[sponsor] == nil {
-            self.stakes[sponsor] = {}
-        }
-        self.stakes[sponsor]![trackDescription] = totalBounty
-
-        self.issueTracks[trackDescription] = IssueTrack()
-        self.hackerSubmissions[trackDescription] = []
-        self.submissionDetails[trackDescription] = {}
-
-        emit TrackCreated(sponsor: sponsor, track: trackDescription, totalBounty: totalBounty, perBugBounty: perBugBounty)
+        self.vaultByCompany[company] <-! FlowToken.createEmptyVault()
+        self.metaByCompany[company] = CompanyMeta(company: company, name: name, defaultPerPayout: defaultPerPayout)
+        self.stakesByCompany[company] = {}
+        self.forumByCompany[company] = []
+        self.issuesByCompany[company] = {}
+        emit CompanyCreated(company: company, name: name, defaultPerPayout: defaultPerPayout)
     }
 
-    // Hacker submits (TX passes hacker addr)
-    access(all) fun submitBug(trackDescription: String, issueSummary: String, hacker: Address) {
+    // ---------- Sponsors (companies) stake to their own pool ----------
+    access(all) fun sponsorStake(company: Address, sponsor: Address, payment: @FlowToken.Vault) {
         pre {
-            self.sponsorPostings[trackDescription] != nil: "Track does not exist"
-            self.issueTracks[trackDescription]!.status == "open": "Submissions are closed for this track"
+            self.metaByCompany[company] != nil: "company not registered"
+            sponsor == company: "sponsor can only stake to their own company"
+            payment.balance > 0.0: "stake must be > 0"
         }
+        let amt = payment.balance
+        self.vaultByCompany[company]!.deposit(from: <-payment)
 
-        // Prevent duplicate submissions from the same hacker to the same track
-        let subs = self.hackerSubmissions[trackDescription]!
-        var already = false
-        for addr in subs {
-            if addr == hacker { already = true; break }
+        if self.stakesByCompany[company]![sponsor] == nil {
+            self.stakesByCompany[company]![sponsor] = 0.0
         }
-        pre { !already: "You have already submitted a bug for this track" }
+        self.stakesByCompany[company]![sponsor] = self.stakesByCompany[company]![sponsor]! + amt
 
-        self.hackerSubmissions[trackDescription]!.append(hacker)
-        self.submissionDetails[trackDescription]![hacker] = issueSummary
-
-        emit HackerSubmitted(hacker: hacker, track: trackDescription, issue: issueSummary)
+        emit SponsorStaked(company: company, sponsor: sponsor, amount: amt, newPool: self.vaultByCompany[company]!.balance)
     }
 
-    // Sponsor accepts & pays exactly one per-bug bounty per call (multiple winners allowed)
-    access(all) fun acceptSubmission(
-        trackDescription: String,
-        sponsor: Address,
+    // ---------- Hackers: forum + submission ----------
+    access(all) fun submitIssue(company: Address, hacker: Address, summary: String) {
+        pre {
+            self.metaByCompany[company] != nil: "company not registered"
+            self.issuesByCompany[company]![hacker] == nil: "already submitted to this company"
+        }
+        let sponsor = self.metaByCompany[company]!.company
+        let post = ForumPost(summary: summary, sponsor: sponsor, hacker: hacker)
+        self.forumByCompany[company]!.append(post)
+        emit ForumPosted(company: company, hacker: hacker, sponsor: sponsor, summary: summary)
+
+        self.issuesByCompany[company]![hacker] = Issue(hacker: hacker, summary: summary)
+        emit IssueSubmitted(company: company, hacker: hacker, summary: summary)
+    }
+
+    // ---------- Bug tracking (company controls) ----------
+    access(all) fun acceptIssue(company: Address, owner: Address, hacker: Address) {
+        pre {
+            self.metaByCompany[company] != nil: "company not registered"
+            self.metaByCompany[company]!.company == owner: "only the company can accept"
+            self.issuesByCompany[company]![hacker] != nil: "no submission from this hacker"
+        }
+        self.issuesByCompany[company]![hacker]!.accepted = true
+        emit IssueAccepted(company: company, hacker: hacker, by: owner)
+    }
+
+    access(all) fun setCompletion(company: Address, owner: Address, hacker: Address, completed: Bool) {
+        pre {
+            self.metaByCompany[company] != nil: "company not registered"
+            self.metaByCompany[company]!.company == owner: "only the company can set completion"
+            self.issuesByCompany[company]![hacker] != nil: "no submission from this hacker"
+        }
+        self.issuesByCompany[company]![hacker]!.completed = completed
+        emit CompletionStatusSet(company: company, hacker: hacker, completed: completed)
+
+        let issue = self.issuesByCompany[company]![hacker]!
+        if completed && issue.paid > 0.0 {
+            let meta = self.metaByCompany[company]!
+            let msg = "\(meta.name) (\(meta.company)): issue fixed and bounty paid."
+            emit CompletionMessage(company: company, message: msg)
+        }
+    }
+
+    // ---------- Payment (company controls; unlocked by acceptance) ----------
+    access(all) fun payBounty(
+        company: Address,
+        owner: Address,
         hacker: Address,
+        amount: UFix64,
         hackerReceiver: Capability<&{FungibleToken.Receiver}>
     ) {
-//edge case handling/error handling
         pre {
-            self.sponsorPostings[trackDescription] != nil: "Track does not exist"
-            self.submissionDetails[trackDescription]![hacker] != nil: "No submission by this hacker"
-            self.issueTracks[trackDescription]!.status == "open": "Track is not open"
-            self.sponsorPostings[trackDescription]!.sponsorAddress == sponsor: "Only the sponsor can accept"
-            self.vaultByTrack[trackDescription]!.balance >= self.sponsorPostings[trackDescription]!.perBugBounty: "Not enough bounty left"
+            self.metaByCompany[company] != nil: "company not registered"
+            self.metaByCompany[company]!.company == owner: "only the company can pay"
+            self.issuesByCompany[company]![hacker] != nil: "no submission from this hacker"
+            self.issuesByCompany[company]![hacker]!.accepted: "issue not accepted"
+            amount > 0.0: "amount must be > 0"
+            self.vaultByCompany[company]!.balance >= amount: "insufficient pool"
         }
+        let recv = hackerReceiver.borrow() ?? panic("bad receiver cap")
+        let payout <- self.vaultByCompany[company]!.withdraw(amount: amount)
+        recv.deposit(from: <-payout)
 
-        let perBug = self.sponsorPostings[trackDescription]!.perBugBounty
+        self.issuesByCompany[company]![hacker]!.paid = self.issuesByCompany[company]![hacker]!.paid + amount
+        emit BountyPaid(company: company, hacker: hacker, amount: amount)
 
-        let receiver = hackerReceiver.borrow() ?? panic("bad receiver cap")
-        let payment <- self.vaultByTrack[trackDescription]!.withdraw(amount: perBug)
-        receiver.deposit(from: <-payment)
-
-        // optional flag you had; keeping it here
-        self.issueTracks[trackDescription]!.sponsorDecision = true
-
-        // Auto-close when pool can’t fund another winner
-        if self.vaultByTrack[trackDescription]!.balance < perBug {
-            self.issueTracks[trackDescription]!.status = "closed"
+        let meta = self.metaByCompany[company]!
+        let issue = self.issuesByCompany[company]![hacker]!
+        if issue.completed && issue.paid > 0.0 {
+            let msg = "\(meta.name) (\(meta.company)): issue fixed and bounty paid."
+            emit CompletionMessage(company: company, message: msg)
         }
-
-        emit IssueAccepted(sponsor: sponsor, track: trackDescription, issue: "approved")
-        emit BountyPaid(hacker: hacker, track: trackDescription, amount: perBug)
     }
 
-    // Sponsor cancels remaining pool back to themselves, gets remaining money back
-    access(all) fun cancelTrack(
-        trackDescription: String,
-        sponsor: Address,
-        sponsorReceiver: Capability<&{FungibleToken.Receiver}>
-    ) {
-        pre {
-            self.sponsorPostings[trackDescription] != nil: "Track does not exist"
-            self.sponsorPostings[trackDescription]!.sponsorAddress == sponsor: "Only the sponsor can cancel"
-            self.issueTracks[trackDescription]!.status == "open": "Track already closed"
+    // ---------- Reads ----------
+    access(all) fun getCompanyMeta(company: Address): CompanyMeta {
+        pre { self.metaByCompany[company] != nil: "company not registered" }
+        return self.metaByCompany[company]!
+    }
+
+    access(all) fun getPoolBalance(company: Address): UFix64 {
+        pre { self.metaByCompany[company] != nil: "company not registered" }
+        return self.vaultByCompany[company]!.balance
+    }
+
+    access(all) fun getIssueStatus(company: Address, hacker: Address): {String: String} {
+        pre { self.issuesByCompany[company]![hacker] != nil: "no submission from this hacker" }
+        let isr = self.issuesByCompany[company]![hacker]!
+        return {
+            "accepted": isr.accepted.toString(),
+            "completed": isr.completed.toString(),
+            "paid": isr.paid.toString()
         }
+    }
 
-        let remaining = self.vaultByTrack[trackDescription]!.balance
-        let receiver = sponsorReceiver.borrow() ?? panic("bad receiver cap")
+    access(all) fun getForum(company: Address): [ForumPost] {
+        pre { self.metaByCompany[company] != nil: "company not registered" }
+        return self.forumByCompany[company]!
+    }
 
-        let payout <- self.vaultByTrack[trackDescription]!.withdraw(amount: remaining)
-        receiver.deposit(from: <-payout)
-
-        self.issueTracks[trackDescription]!.status = "closed"
-
-        emit TrackCanceled(track: trackDescription, sponsor: sponsor, amount: remaining)
+    access(all) fun getStakeOf(company: Address, sponsor: Address): UFix64 {
+        pre { self.metaByCompany[company] != nil: "company not registered" }
+        return self.stakesByCompany[company]![sponsor] ?? 0.0
     }
 }
