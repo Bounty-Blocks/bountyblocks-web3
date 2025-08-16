@@ -263,10 +263,8 @@ access(all) contract Bounty {
         let swapConnector = self.swapConnector!
         
         // Verify the swap connector can handle the conversion
-        pre {
-            swapConnector.inType() == originalTokenType: "Swap connector cannot handle input token type"
-            swapConnector.outType() == self.USDFTokenType: "Swap connector must output USDF"
-        }
+        swapConnector.inType() == originalTokenType
+        swapConnector.outType() == self.USDFTokenType
         
         // Get quote for conversion to USDF
         let quote = swapConnector.quoteIn(forDesired: bountyAmount, reverse: false)
@@ -432,15 +430,13 @@ access(all) contract Bounty {
             self.hackerPosts[hackerPostId] != nil: "Hacker post not found"
             !self.hackerPosts[hackerPostId]!.isAccepted: "Bug already accepted"
             !self.hackerPosts[hackerPostId]!.isPaid: "Bug already paid"
+            getCurrentAuthAccount().address == self.companyPosts[hacerPost.companyPostId].company: "Only the company can accept bugs"
         }
         
         let hackerPost = self.hackerPosts[hackerPostId]!
         let companyPost = self.companyPosts[hackerPost.companyPostId]!
         let company = getCurrentAuthAccount().address
         
-        pre {
-            company == companyPost.company: "Only the company can accept bugs"
-        }
         
         // Mark bug as accepted
         self.hackerPosts[hackerPostId]!.isAccepted = true
@@ -475,16 +471,14 @@ access(all) contract Bounty {
             self.hackerPosts[hackerPostId]!.isAccepted: "Bug must be accepted before payout"
             !self.hackerPosts[hackerPostId]!.isPaid: "Bug already paid"
             self.swapConnector != nil: "Swap connector not set"
+            getCurrentAuthAccount().address == self.companyPosts[hackerPost.companyPostId].company: "Only the company can pay bounties"
         }
         
         let hackerPost = self.hackerPosts[hackerPostId]!
         let companyPost = self.companyPosts[hackerPost.companyPostId]!
         let company = getCurrentAuthAccount().address
         
-        pre {
-            company == companyPost.company: "Only the company can pay bounties"
-        }
-        
+
         // Get company vault
         let companyVaultPath = self.CompanyVaultStoragePath.concat(companyPost.id.toString())
         let companyVaultCap = getCurrentAuthAccount().capabilities.storage
@@ -517,10 +511,8 @@ access(all) contract Bounty {
             let swapConnector = self.swapConnector!
             
             // Verify the swap connector can handle the conversion
-            pre {
-                swapConnector.inType() == self.USDFTokenType: "Swap connector must accept USDF as input"
-                swapConnector.outType() == hackerPost.tokenPreference: "Swap connector must output hacker's preferred token"
-            }
+            swapConnector.inType() = self.USDFTokenType
+            swapConnector.outType() = hackerPost.tokenPreference
             
             // Create a unique identifier for this operation
             let operationID = DeFiActions.createUniqueIdentifier()
@@ -594,19 +586,7 @@ access(all) contract Bounty {
         return self.hackerPosts.values
     }
     
-    /// Get hacker posts for a specific company post
-    access(all) fun getHackerPostsForCompany(companyPostId: UInt64): [HackerPost] {
-        return self.hackerPosts.values.filter { post in
-            post.companyPostId == companyPostId
-        }
-    }
     
-    /// Get pending hacker posts for a company (accepted but not paid)
-    access(all) fun getPendingHackerPosts(companyPostId: UInt64): [HackerPost] {
-        return self.hackerPosts.values.filter { post in
-            post.companyPostId == companyPostId && post.isAccepted && !post.isPaid
-        }
-    }
     
     /// Get NFT collection for an account
     access(all) fun getNFTCollection(account: PublicAccount): &BugReportNFTCollection? {
