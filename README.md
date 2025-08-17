@@ -13,7 +13,7 @@ Built on Flow for programmable issue management and atomic payouts, and Walrus f
 
 
 ## Tech Stack
- - Code in this repository deploys Cadence smart contracts on Flow, as well a Flow Sink/Swap agent
+ - Code in this repository deploys Cadence smart contracts and a Flow Sink/Swap agent on Flow TestNet.
 
 ## See also:
 - The front-end portion of this project (including deployment on Walrus): [github.com/Bounty-Blocks/bountyblocks-next-app](https://github.com/Bounty-Blocks/bountyblocks-web3)
