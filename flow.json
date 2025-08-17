@@ -35,6 +35,30 @@
 			"aliases": {
 				"testing": "0000000000000007"
 			}
+		},
+		"BountyBlocksNFTContract": {
+			"source": "./cadence/contracts/BountyBlocksNFTContract.cdc",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
+		},
+		"MetadataViews": {
+			"source": "",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
+		},
+		"NonFungibleToken": {
+			"source": "",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
+		},
+		"ViewResolver": {
+			"source": "",
+			"aliases": {
+				"testing": "0000000000000007"
+			}
 		}
 	},
 	"dependencies": {
