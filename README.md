@@ -14,7 +14,7 @@ Built on Flow for programmable issue management and atomic payouts, and Walrus f
 
 ## Tech Stack
  - Code in this repository deploys Cadence smart contracts and a Flow Sink/Swap agent on Flow TestNet.
-
+ - Actions: We used SinkSwap. This allows us to deposit any token into a 'sink' vault with an auto-swap feature that turns it into a coin of our choice. Then, when it is withdrawn as a reward to the hacker, it can be retrieved as a token of the hacker's choice using the same swap feature. This action accomplished a very cumbersome feat in blockchain, the exchange of tokens, quickly and efficiently. 
 ## See also:
 - The front-end portion of this project (including deployment on Walrus): [github.com/Bounty-Blocks/bountyblocks-next-app](https://github.com/Bounty-Blocks/bountyblocks-web3)
 - Documentation and other resources: [github.com/Bounty-Blocks/Documentation-and-working-files](https://github.com/Bounty-Blocks/Documentation-and-working-files)
