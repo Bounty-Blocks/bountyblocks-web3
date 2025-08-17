@@ -4,10 +4,10 @@
 BountyBlocks began as an on-chain bug bounty platform and has evolved into a web3 Verifiable Bounty Ledger (VBL).
 
 We strengthen transparency and community. With BountyBlocks:
- - Sponsors prevent vulnerabilities from disrupting their products.
- - Ethical hackers remediate issues for monetary rewards (e.g., USDF bounties) and reputational rewards (NFT credentials)—staying pseudonymous while proving capability.
+ - Sponsors prevent and identify vulnerabilities from disrupting their products.
+ - Ethical hackers remediate issues for monetary rewards (e.g., USDF bounties) and reputational rewards (NFT credentials) staying anonymous while proving capability.
 
-Our solution is token-agnostic: sponsors fund in one asset; hackers claim in another via on-chain swaps. The VBL automates quotes, routing, and slippage, and records assets, rates, and proofs for audit.
+Our solution is token-agnostic: sponsors fund in one asset; hackers claim in another via on-chain swaps. The VBL automates quotes, routing, slippage, records assets, rates, and proofs for audit.
 
 Built on Flow for programmable issue management and atomic payouts, and Walrus for privacy-preserving evidence and selective disclosure, BountyBlocks delivers an end-to-end, transparent, auditable bounty workflow.
 
