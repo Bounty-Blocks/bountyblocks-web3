@@ -140,6 +140,32 @@ access(all) fun makeActionSource(): ActionSource { return ActionSource() }
 
     access(all) fun flowTokenPoolBalance(): UFix64 { return self.globalFlowToken.balance }
 
+    // Add SinkSwap connector interface
+    access(all) struct SinkSwapConnector {
+    access(all) let routerAddress: Address
+    access(all) let supportedTokens: [Type]
+    
+    init(routerAddress: Address) {
+        self.routerAddress = routerAddress
+        self.supportedTokens = []
+    }
+
+    access(all) fun getQuote(fromToken: Type, toToken: Type, amount: UFix64): UFix64 {
+        return amount // placeholder 1:1
+    }
+
+    // NOTE: take the payment by MOVE, and deposit to a Receiver
+    access(all) fun executeSwap(
+        payment: @{FungibleToken.Vault},
+        to: &{FungibleToken.Receiver}
+    ): UFix64 {
+        let amount = payment.balance
+        to.deposit(from: <-payment)   // consumes the resource
+        return amount                  // placeholder: 1:1
+    }
+}
+
+
     // -------------------- Public API --------------------
 
     /// 1) Company creates a bounty post and stakes ANY token.
@@ -148,7 +174,8 @@ access(all) fun makeActionSource(): ActionSource { return ActionSource() }
     access(all) fun createCompanyPost(
         policy: String,
         tokenVault: @{FungibleToken.Vault},
-        company: Address
+        company: Address,
+        sinkSwapConnector: SinkSwapConnector
     ): UInt64 {
         let postId = self.nextCompanyPostId
         self.nextCompanyPostId = postId + 1
@@ -163,29 +190,22 @@ access(all) fun makeActionSource(): ActionSource { return ActionSource() }
         )
         self.companyPosts[postId] = companyPost
 
-        // Track pool delta to credit exact FlowToken received
         let before = self.flowTokenPoolBalance()
 
-        // For now, just deposit tokens directly (you'll implement SinkSwap later)
-        let payment <- tokenVault.withdraw(amount: tokenVault.balance)
-        self.globalFlowToken.deposit(from: <-payment)
+let convertedAmount = sinkSwapConnector.executeSwap(
+    payment: <-tokenVault,                                     // MOVE it
+    to: &self.globalFlowToken as &{FungibleToken.Receiver}     // just needs Receiver
+)
 
-        let after = self.flowTokenPoolBalance()
-        let delta = after - before
-        self.postFlowToken[postId] = (self.postFlowToken[postId] ?? 0.0) + delta
+let after = self.flowTokenPoolBalance()
+let delta = after - before
+self.postFlowToken[postId] = (self.postFlowToken[postId] ?? 0.0) + delta
 
-        destroy tokenVault
+// remove: destroy tokenVault   // (already consumed by deposit)
+emit TokensConvertedToFlowToken(postId: postId, fromToken: originalType, flowTokenAmount: delta)
+emit CompanyPostCreated(id: postId, company: company, policy: policy, inToken: originalType, flowTokenCredited: delta)
 
-        emit TokensConvertedToFlowToken(postId: postId, fromToken: originalType, flowTokenAmount: delta)
-        emit CompanyPostCreated(
-            id: postId,
-            company: company,
-            policy: policy,
-            inToken: originalType,
-            flowTokenCredited: delta
-        )
-
-        return postId
+return postId
     }
 
     /// 2) Hacker files a submission indicating payout token preference.
@@ -230,31 +250,42 @@ access(all) fun makeActionSource(): ActionSource { return ActionSource() }
     }
 
     /// 4) Payout bounty from this post's FlowToken to the hacker in their preferred token.
-    access(all) fun payBounty(
-        hackerPostId: UInt64,
-        company: Address,
-        amountFlowToken: UFix64,
-        payoutReceiver: &{FungibleToken.Receiver}
-    ) {
-        let hp = self.hackerPosts[hackerPostId] ?? panic("Hacker post not found")
-        let cp = self.companyPosts[hp.companyPostId] ?? panic("Company post not found")
+   // Change the signature to:
+access(all) fun payBounty(
+    hackerPostId: UInt64,
+    company: Address,
+    amountFlowToken: UFix64,
+    sinkSwapConnector: SinkSwapConnector,
+    hackerTokenReceiver: &{FungibleToken.Receiver}
+) {
+    let hp = self.hackerPosts[hackerPostId] ?? panic("Hacker post not found")
+    let _cp = self.companyPosts[hp.companyPostId] ?? panic("Company post not found")
 
-        // Check and debit the post's FlowToken allocation
-        let cur = self.postFlowToken[hp.companyPostId] ?? 0.0
-        self.postFlowToken[hp.companyPostId] = cur - amountFlowToken
+    // debit allocation safely
+    let cur = self.postFlowToken[hp.companyPostId] ?? 0.0
+    if amountFlowToken > cur { panic("insufficient allocated funds for this post") }
+    self.postFlowToken[hp.companyPostId] = cur - amountFlowToken
 
-        // Pull from pool and pay to hacker
-        let payment <- self.globalFlowToken.withdraw(amount: amountFlowToken)
-        payoutReceiver.deposit(from: <-payment)
+    // MOVE from the pool
+    let flowTokenPayment <- self.globalFlowToken.withdraw(amount: amountFlowToken)
 
-        self.hackerPosts[hackerPostId]!.setPaid(paid: true)
-        emit BountyPaid(postId: hackerPostId, hacker: hp.hacker, amount: amountFlowToken, paidToken: hp.tokenPreference)
-    }
+    // swap consumes the moved resource and deposits to recipient
+    let convertedAmount = sinkSwapConnector.executeSwap(
+        payment: <-flowTokenPayment,
+        to: hackerTokenReceiver
+    )
+
+    self.hackerPosts[hackerPostId]!.setPaid(paid: true)
+    emit BountyPaid(
+        postId: hackerPostId,
+        hacker: hp.hacker,
+        amount: convertedAmount,
+        paidToken: hp.tokenPreference   // use declared preference
+    )
+}
 
     // -------------------- Convenience Views --------------------
     access(all) fun getCompanyPost(id: UInt64): CompanyPost? { return self.companyPosts[id] }
     access(all) fun getHackerPost(id: UInt64): HackerPost? { return self.hackerPosts[id] }
     access(all) fun postBalanceFlowToken(companyPostId: UInt64): UFix64 { return self.postFlowToken[companyPostId] ?? 0.0 }
-    access(all) fun setPostActive(companyPostId: UInt64, active: Bool) {
-    }
 }
