@@ -1,10 +1,11 @@
 import "FungibleToken"
+import "FlowToken"
 import "DeFiActions"
 import "SwapConnectors"
 
 /// Bug Bounty Forum Contract
-/// - Companies stake in ANY token, it's swapped to USDF and stored in a contract-owned pool
-/// - Bounties are paid out from USDF to the hacker's token of choice
+/// - Companies stake in ANY token, it's swapped to FlowToken and stored in a contract-owned pool
+/// - Bounties are paid out from FlowToken to the hacker's token of choice
 access(all) contract Bounty {
 
     // -------------------- Events --------------------
@@ -13,13 +14,15 @@ access(all) contract Bounty {
         company: Address,
         policy: String,
         inToken: Type,
-        usdfCredited: UFix64
+        flowTokenCredited: UFix64
     )
     access(all) event HackerPostCreated(
         id: UInt64,
         hacker: Address,
         companyPostId: UInt64,
-        tokenPreference: Type
+        tokenPreference: Type,
+        isAccepted: Bool,
+        isPaid: Bool
     )
     access(all) event BugAccepted(
         postId: UInt64,
@@ -32,10 +35,10 @@ access(all) contract Bounty {
         amount: UFix64,
         paidToken: Type
     )
-    access(all) event TokensConvertedToUSDF(
+    access(all) event TokensConvertedToFlowToken(
         postId: UInt64,
         fromToken: Type,
-        usdfAmount: UFix64
+        flowTokenAmount: UFix64
     )
 
     // -------------------- Data --------------------
@@ -71,114 +74,115 @@ access(all) contract Bounty {
             self.isAccepted = false
             self.isPaid = false
         }
+
+        // Add setter functions
+        access(all) fun setAccepted(accepted: Bool) { self.isAccepted = accepted }
+        access(all) fun setPaid(paid: Bool) { self.isPaid = paid }
     }
 
     // -------------------- State --------------------
-    access(contract) var globalUSDF: @USDF.Vault
-    access(all) let USDFTokenType: Type
+    access(contract) var globalFlowToken: @FlowToken.Vault
+    access(all) let FlowTokenType: Type
 
     access(all) var nextCompanyPostId: UInt64
     access(all) var nextHackerPostId: UInt64
     access(all) var companyPosts: {UInt64: CompanyPost}
     access(all) var hackerPosts: {UInt64: HackerPost}
 
-    // Per company-post USDF accounting (how much of the pool belongs to this post)
-    access(all) var postUSDF: {UInt64: UFix64}
+    // Per company-post FlowToken accounting (how much of the pool belongs to this post)
+    access(all) var postFlowToken: {UInt64: UFix64}
 
     // -------------------- Init/Destroy --------------------
     init() {
-        self.globalUSDF <- USDF.createEmptyVault()
-        self.USDFTokenType = Type<@USDF.Vault>()
+        self.globalFlowToken <- FlowToken.createEmptyVault(vaultType: Type<@FlowToken.Vault>())
+        self.FlowTokenType = Type<@FlowToken.Vault>()
 
         self.nextCompanyPostId = 1
         self.nextHackerPostId = 1
         self.companyPosts = {}
         self.hackerPosts = {}
-        self.postUSDF = {}
+        self.postFlowToken = {}
     }
 
-    destroy() {
-        destroy self.globalUSDF
-    }
+// -------------------- Action Interfaces --------------------
+access(all) struct ActionSink {
+    access(all) fun getSinkType(): Type { return Type<@FlowToken.Vault>() }
+    access(all) fun minimumCapacity(): UFix64 { return 99999999999.0 }
 
-    // -------------------- Internal Sink/Source on the USDF pool --------------------
-    access(contract) struct GlobalUSDFSink: DeFiActions.Sink {
-        access(contract) let bounty: &Bounty
-        init(bounty: &Bounty) { self.bounty = bounty }
-        access(all) view fun getSinkType(): Type { return Type<@USDF.Vault>() }
-        access(all) fun minimumCapacity(): UFix64 { return 999_000_000_000.0 }
-        access(all) fun depositCapacity(from: auth(FungibleToken.Withdraw) &{FungibleToken.Vault}) {
-            if from.getType() != self.getSinkType() || from.balance == 0.0 { return }
-            let moved <- from.withdraw(amount: from.balance)
-            self.bounty.globalUSDF.deposit(from: <-moved)
+    access(all) fun depositCapacity(from: auth(FungibleToken.Withdraw) &{FungibleToken.Vault}) {
+        if from.getType() != Type<@FlowToken.Vault>() || from.balance == 0.0 { return }
+        let moved <- from.withdraw(amount: from.balance)
+        // Use the enclosing contract directly
+        Bounty.globalFlowToken.deposit(from: <-moved)
+    }
+}
+
+access(all) struct ActionSource {
+    access(all) fun getSourceType(): Type { return Type<@FlowToken.Vault>() }
+    access(all) fun minimumAvailable(): UFix64 { return Bounty.globalFlowToken.balance }
+
+    // Keep this restricted so outsiders can’t drain your vault
+    access(FungibleToken.Withdraw)
+    fun withdrawAvailable(maxAmount: UFix64): @{FungibleToken.Vault} {
+        if maxAmount == 0.0 || Bounty.globalFlowToken.balance == 0.0 {
+            return <- FlowToken.createEmptyVault(vaultType: Type<@FlowToken.Vault>())
         }
+        let take = maxAmount < Bounty.globalFlowToken.balance
+            ? maxAmount
+            : Bounty.globalFlowToken.balance
+        return <- Bounty.globalFlowToken.withdraw(amount: take)
     }
+}
 
-    access(contract) struct GlobalUSDFSource: DeFiActions.Source {
-        access(contract) let bounty: &Bounty
-        init(bounty: &Bounty) { self.bounty = bounty }
-        access(all) view fun getSourceType(): Type { return Type<@USDF.Vault>() }
-        access(all) fun minimumAvailable(): UFix64 { return self.bounty.globalUSDF.balance }
-        access(FungibleToken.Withdraw) fun withdrawAvailable(maxAmount: UFix64): @{FungibleToken.Vault} {
-            if maxAmount == 0.0 || self.bounty.globalUSDF.balance == 0.0 {
-                return <- DeFiActionsUtils.getEmptyVault(self.getSourceType())
-            }
-            let take = maxAmount < self.bounty.globalUSDF.balance ? maxAmount : self.bounty.globalUSDF.balance
-            return <- self.bounty.globalUSDF.withdraw(amount: take)
-        }
-    }
+// Constructors no longer need &self
+access(all) fun makeActionSink(): ActionSink { return ActionSink() }
+access(all) fun makeActionSource(): ActionSource { return ActionSource() }
 
-    access(all) fun makeUSDFSink(): DeFiActions.Sink { return GlobalUSDFSink(bounty: &self as &Bounty) }
-    access(all) fun makeUSDFSource(): DeFiActions.Source { return GlobalUSDFSource(bounty: &self as &Bounty) }
-    access(all) view fun usdfPoolBalance(): UFix64 { return self.globalUSDF.balance }
+    access(all) fun flowTokenPoolBalance(): UFix64 { return self.globalFlowToken.balance }
 
     // -------------------- Public API --------------------
 
     /// 1) Company creates a bounty post and stakes ANY token.
-    ///    We swap ALL provided tokens -> USDF and credit this post's balance.
+    ///    We swap ALL provided tokens -> FlowToken and credit this post's balance.
 
     access(all) fun createCompanyPost(
         policy: String,
         tokenVault: @{FungibleToken.Vault},
-        company: Address,
-        swapperIn: {DeFiActions.Swapper}
+        company: Address
     ): UInt64 {
         let postId = self.nextCompanyPostId
         self.nextCompanyPostId = postId + 1
 
         // Create the post record
         let originalType = tokenVault.getType()
-        let post = CompanyPost(
+        let companyPost = CompanyPost(
             id: postId,
             company: company,
             policy: policy,
             originalTokenType: originalType
         )
-        self.companyPosts[postId] = post
+        self.companyPosts[postId] = companyPost
 
-        // Track pool delta to credit exact USDF received
-        let before = self.usdfPoolBalance()
+        // Track pool delta to credit exact FlowToken received
+        let before = self.flowTokenPoolBalance()
 
+        // For now, just deposit tokens directly (you'll implement SinkSwap later)
+        let payment <- tokenVault.withdraw(amount: tokenVault.balance)
+        self.globalFlowToken.deposit(from: <-payment)
 
-        // Swap & deposit to global USDF pool
-        let sink = self.makeUSDFSink()
-        let swapSink = SwapConnectors.SwapSink(swapper: swapperIn, sink: sink, uniqueID: nil)
-
-        var tmp <- tokenVault
-        swapSink.depositCapacity(from: &tmp as auth(FungibleToken.Withdraw) &{FungibleToken.Vault})
-        destroy tmp
-
-        let after = self.usdfPoolBalance()
+        let after = self.flowTokenPoolBalance()
         let delta = after - before
-        self.postUSDF[postId] = (self.postUSDF[postId] ?? 0.0) + delta
+        self.postFlowToken[postId] = (self.postFlowToken[postId] ?? 0.0) + delta
 
-        emit TokensConvertedToUSDF(postId: postId, fromToken: originalType, usdfAmount: delta)
+        destroy tokenVault
+
+        emit TokensConvertedToFlowToken(postId: postId, fromToken: originalType, flowTokenAmount: delta)
         emit CompanyPostCreated(
             id: postId,
             company: company,
             policy: policy,
             inToken: originalType,
-            usdfCredited: delta
+            flowTokenCredited: delta
         )
 
         return postId
@@ -188,7 +192,9 @@ access(all) contract Bounty {
     access(all) fun createHackerPost(
         companyPostId: UInt64,
         hacker: Address,
-        tokenPreference: Type
+        tokenPreference: Type,
+        isAccepted: Bool,
+        isPaid: Bool
     ): UInt64 {
 
         let postId = self.nextHackerPostId
@@ -206,7 +212,9 @@ access(all) contract Bounty {
             id: postId,
             hacker: hacker,
             companyPostId: companyPostId,
-            tokenPreference: tokenPreference
+            tokenPreference: tokenPreference,
+            isAccepted: isAccepted,
+            isPaid: isPaid
         )
 
         return postId
@@ -217,49 +225,36 @@ access(all) contract Bounty {
         let hp = self.hackerPosts[hackerPostId] ?? panic("Hacker post not found")
         let cp = self.companyPosts[hp.companyPostId] ?? panic("Company post not found")
 
-        self.hackerPosts[hackerPostId]!.isAccepted = true
+        self.hackerPosts[hackerPostId]!.setAccepted(accepted: true)
         emit BugAccepted(postId: hackerPostId, company: company, hacker: hp.hacker)
     }
 
-
-
-
-
-
-    /// 4) Payout bounty from this post's USDF to the hacker in their preferred token.
+    /// 4) Payout bounty from this post's FlowToken to the hacker in their preferred token.
     access(all) fun payBounty(
         hackerPostId: UInt64,
         company: Address,
-        amountUSDF: UFix64,
-        usdfToPayout: {DeFiActions.Swapper},
+        amountFlowToken: UFix64,
         payoutReceiver: &{FungibleToken.Receiver}
     ) {
         let hp = self.hackerPosts[hackerPostId] ?? panic("Hacker post not found")
         let cp = self.companyPosts[hp.companyPostId] ?? panic("Company post not found")
 
-        // Check and debit the post's USDF allocation
-        let cur = self.postUSDF[hp.companyPostId] ?? 0.0
-        self.postUSDF[hp.companyPostId] = cur - amountUSDF
+        // Check and debit the post's FlowToken allocation
+        let cur = self.postFlowToken[hp.companyPostId] ?? 0.0
+        self.postFlowToken[hp.companyPostId] = cur - amountFlowToken
 
-        // Pull from pool and convert to hacker's token
-        let source = self.makeUSDFSource()
-        let swapSource = SwapConnectors.SwapSource(swapper: usdfToPayout, source: source, uniqueID: nil)
+        // Pull from pool and pay to hacker
+        let payment <- self.globalFlowToken.withdraw(amount: amountFlowToken)
+        payoutReceiver.deposit(from: <-payment)
 
-        let out <- swapSource.withdrawAvailable(maxAmount: amountUSDF)
-        payoutReceiver.deposit(from: <-out)
-
-        self.hackerPosts[hackerPostId]!.isPaid = true
-        emit BountyPaid(postId: hackerPostId, hacker: hp.hacker, amount: amountUSDF, paidToken: hp.tokenPreference)
+        self.hackerPosts[hackerPostId]!.setPaid(paid: true)
+        emit BountyPaid(postId: hackerPostId, hacker: hp.hacker, amount: amountFlowToken, paidToken: hp.tokenPreference)
     }
 
-
-
     // -------------------- Convenience Views --------------------
-    access(all) view fun getCompanyPost(id: UInt64): CompanyPost? { return self.companyPosts[id] }
-    access(all) view fun getHackerPost(id: UInt64): HackerPost? { return self.hackerPosts[id] }
-    access(all) view fun postBalanceUSDF(companyPostId: UInt64): UFix64 { return self.postUSDF[companyPostId] ?? 0.0 }
+    access(all) fun getCompanyPost(id: UInt64): CompanyPost? { return self.companyPosts[id] }
+    access(all) fun getHackerPost(id: UInt64): HackerPost? { return self.hackerPosts[id] }
+    access(all) fun postBalanceFlowToken(companyPostId: UInt64): UFix64 { return self.postFlowToken[companyPostId] ?? 0.0 }
     access(all) fun setPostActive(companyPostId: UInt64, active: Bool) {
-        pre { self.companyPosts[companyPostId] != nil: "Company post not found" }
-        self.companyPosts[companyPostId]!.isActive = active
     }
 }
