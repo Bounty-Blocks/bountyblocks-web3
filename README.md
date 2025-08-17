@@ -13,4 +13,4 @@ Built on Flow for programmable issue management and atomic payouts, and Walrus f
 
 
 ## Tech Stack
- - code in this repository deploys Cadence smart contracts on Flow
+ - Code in this repository deploys Cadence smart contracts on Flow, as well a Flow Sink/Swap agent
