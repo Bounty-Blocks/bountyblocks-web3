@@ -1,7 +1,7 @@
 import "NonFungibleToken"
 import "MetadataViews"
 
-access(all) contract FooBar: NonFungibleToken {
+access(all) contract BountyBlocksNFTContract: NonFungibleToken {
 
     /// Standard Paths
     access(all) let CollectionStoragePath: StoragePath
@@ -10,7 +10,7 @@ access(all) contract FooBar: NonFungibleToken {
     /// Path where the minter should be stored
     access(all) let MinterStoragePath: StoragePath
 
-    access(all) resource NFT: NonFungibleToken.NFT {
+    access(all) resource BountyBlocksNFT: NonFungibleToken.NFT {
         access(all) let id: UInt64
 
         init() {
@@ -18,7 +18,7 @@ access(all) contract FooBar: NonFungibleToken {
         }
 
         access(all) fun createEmptyCollection(): @{NonFungibleToken.Collection} {
-            return <-FooBar.createEmptyCollection(nftType: Type<@FooBar.NFT>())
+            return <-BountyBlocksNFTContract.createEmptyCollection(nftType: Type<@BountyBlocksNFTContract.BountyBlocksNFT>())
         }
 
         /// Gets a list of views specific to the individual NFT
@@ -37,16 +37,17 @@ access(all) contract FooBar: NonFungibleToken {
             switch view {
                 case Type<MetadataViews.Display>():
                     return MetadataViews.Display(
-                        name: "FooBar Example Token",
-                        description: "An Example NFT Contract from the Flow NFT Guide",
+                        name: "BountyBlocksNFT",
+                        description: "A BountyBlocksNFT, certifying that the holder has reported a bug to BountyBlocks",
                         thumbnail: MetadataViews.HTTPFile(
+                            // TODO: Add real URL
                             url: "Fill this in with a URL to a thumbnail of the NFT"
                         )
                     )
                 case Type<MetadataViews.Editions>():
                     // There is no max number of NFTs that can be minted from this contract
                     // so the max edition field value is set to nil
-                    let editionInfo = MetadataViews.Edition(name: "FooBar Edition", number: self.id, max: nil)
+                    let editionInfo = MetadataViews.Edition(name: "BountyBlocksNFTContract Edition", number: self.id, max: nil)
                     let editionList: [MetadataViews.Edition] = [editionInfo]
                     return MetadataViews.Editions(
                         editionList
@@ -56,9 +57,9 @@ access(all) contract FooBar: NonFungibleToken {
                         self.id
                     )
                 case Type<MetadataViews.NFTCollectionData>():
-                    return FooBar.resolveContractView(resourceType: Type<@FooBar.NFT>(), viewType: Type<MetadataViews.NFTCollectionData>())
+                    return BountyBlocksNFTContract.resolveContractView(resourceType: Type<@BountyBlocksNFTContract.BountyBlocksNFT>(), viewType: Type<MetadataViews.NFTCollectionData>())
                 case Type<MetadataViews.NFTCollectionDisplay>():
-                    return FooBar.resolveContractView(resourceType: Type<@FooBar.NFT>(), viewType: Type<MetadataViews.NFTCollectionDisplay>())
+                    return BountyBlocksNFTContract.resolveContractView(resourceType: Type<@BountyBlocksNFTContract.BountyBlocksNFT>(), viewType: Type<MetadataViews.NFTCollectionDisplay>())
             }
             return nil
         }
@@ -75,7 +76,7 @@ access(all) contract FooBar: NonFungibleToken {
         /// deposit takes a NFT and adds it to the collections dictionary
         /// and adds the ID to the id array
         access(all) fun deposit(token: @{NonFungibleToken.NFT}) {
-            let token <- token as! @FooBar.NFT
+            let token <- token as! @BountyBlocksNFTContract.BountyBlocksNFT
             let id = token.id
 
             // add the new token to the dictionary which removes the old one
@@ -100,14 +101,14 @@ access(all) contract FooBar: NonFungibleToken {
         /// getSupportedNFTTypes returns a list of NFT types that this receiver accepts
         access(all) view fun getSupportedNFTTypes(): {Type: Bool} {
             let supportedTypes: {Type: Bool} = {}
-            supportedTypes[Type<@FooBar.NFT>()] = true
+            supportedTypes[Type<@BountyBlocksNFTContract.BountyBlocksNFT>()] = true
             return supportedTypes
         }
 
         /// Returns whether or not the given type is accepted by the collection
         /// A collection that can accept any type should just return true by default
         access(all) view fun isSupportedNFTType(type: Type): Bool {
-            return type == Type<@FooBar.NFT>()
+            return type == Type<@BountyBlocksNFTContract.BountyBlocksNFT>()
         }
 
         /// Allows a caller to borrow a reference to a specific NFT
@@ -120,7 +121,7 @@ access(all) contract FooBar: NonFungibleToken {
         /// and returns it to the caller
         /// @return A an empty collection of the same type
         access(all) fun createEmptyCollection(): @{NonFungibleToken.Collection} {
-            return <-FooBar.createEmptyCollection(nftType: Type<@FooBar.NFT>())
+            return <-BountyBlocksNFTContract.createEmptyCollection(nftType: Type<@BountyBlocksNFTContract.BountyBlocksNFT>())
         }
 
     }
@@ -146,10 +147,10 @@ access(all) contract FooBar: NonFungibleToken {
                 let collectionData = MetadataViews.NFTCollectionData(
                     storagePath: self.CollectionStoragePath,
                     publicPath: self.CollectionPublicPath,
-                    publicCollection: Type<&FooBar.Collection>(),
-                    publicLinkedType: Type<&FooBar.Collection>(),
+                    publicCollection: Type<&BountyBlocksNFTContract.Collection>(),
+                    publicLinkedType: Type<&BountyBlocksNFTContract.Collection>(),
                     createEmptyCollectionFunction: (fun(): @{NonFungibleToken.Collection} {
-                        return <-FooBar.createEmptyCollection(nftType: Type<@FooBar.NFT>())
+                        return <-BountyBlocksNFTContract.createEmptyCollection(nftType: Type<@BountyBlocksNFTContract.BountyBlocksNFT>())
                     })
                 )
                 return collectionData
@@ -161,7 +162,7 @@ access(all) contract FooBar: NonFungibleToken {
                     mediaType: "image/svg+xml"
                 )
                 return MetadataViews.NFTCollectionDisplay(
-                    name: "The FooBar Example Collection",
+                    name: "The BountyBlocksNFTContract Example Collection",
                     description: "This collection is used as an example to help you develop your next Flow NFT.",
                     externalURL: MetadataViews.ExternalURL("Add your own link here"),
                     squareImage: media,
@@ -175,8 +176,8 @@ access(all) contract FooBar: NonFungibleToken {
     }
 
     access(all) resource NFTMinter {
-        access(all) fun createNFT(): @NFT {
-            return <-create NFT()
+        access(all) fun createNFT(): @BountyBlocksNFT {
+            return <-create BountyBlocksNFT()
         }
 
         init() {}
@@ -184,9 +185,9 @@ access(all) contract FooBar: NonFungibleToken {
 
     init() {
         // Set the named paths
-        self.CollectionStoragePath = /storage/fooBarNFTCollection
-        self.CollectionPublicPath = /public/fooBarNFTCollection
-        self.MinterStoragePath = /storage/fooBarNFTMinter
-        self.account.storage.save(<- create NFTMinter(), to: /storage/fooBarNFTMinter)
+        self.CollectionStoragePath = /storage/BountyBlocksNFTContractNFTCollection
+        self.CollectionPublicPath = /public/BountyBlocksNFTContractNFTCollection
+        self.MinterStoragePath = /storage/BountyBlocksNFTContractNFTMinter
+        self.account.storage.save(<- create NFTMinter(), to: /storage/BountyBlocksNFTContractNFTMinter)
     }
 }
